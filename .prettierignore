@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+.env*
+package-lock.json
+supabase/*.sql
+supabase/tests/*.sql
+docs/screenshots
