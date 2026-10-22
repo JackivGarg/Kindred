@@ -1,19 +1,84 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { LogOut, ShieldCheck, UserRound } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { CheckCircle2, Eye, EyeOff, LogOut, MailCheck, ShieldCheck, UserRound } from 'lucide-react';
 import { errorMessage, useCommunity } from '../lib/community';
-import { sendPasswordReset, signIn, signUp, updatePassword } from '../lib/auth';
+import {
+  authErrorMessage,
+  resendConfirmation,
+  sendPasswordReset,
+  signIn,
+  signUp,
+  updatePassword,
+  validateNewPassword,
+} from '../lib/auth';
 import { REGIONS, type Profile } from '../lib/types';
 import Avatar from './Avatar';
 import Modal from './Modal';
 import './panels.css';
 
+type Screen = 'signin' | 'signup' | 'reset' | 'confirmation';
+type Fields = Partial<Record<'email' | 'password' | 'confirm' | 'nickname' | 'adult', string>>;
+function PasswordField({
+  label,
+  value,
+  onChange,
+  error,
+  fresh = false,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  fresh?: boolean;
+  disabled?: boolean;
+}) {
+  const id = useId();
+  const [visible, setVisible] = useState(false);
+  useEffect(() => setVisible(false), [label, fresh]);
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <div className="account-password">
+        <input
+          id={id}
+          type={visible ? 'text' : 'password'}
+          autoComplete={fresh ? 'new-password' : 'current-password'}
+          required
+          value={value}
+          disabled={disabled}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          type="button"
+          className="account-password-toggle"
+          aria-label={`${visible ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
+          aria-pressed={visible}
+          onClick={() => setVisible(!visible)}
+        >
+          {visible ? <EyeOff size={17} /> : <Eye size={17} />}
+        </button>
+      </div>
+      {error && (
+        <span id={`${id}-error`} className="account-field-error">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function AccountPanel({
   onClose,
   onNotice,
+  initialScreen = 'signin',
 }: {
   onClose: () => void;
   onNotice: (message: string) => void;
+  initialScreen?: 'signin' | 'signup';
 }) {
+  const context = useCommunity();
   const {
     repository,
     profile,
@@ -28,21 +93,53 @@ export default function AccountPanel({
     logout,
     loading,
     error: contextError,
-  } = useCommunity();
-  const [screen, setScreen] = useState<'signin' | 'signup' | 'reset'>('signin');
+  } = context;
+  // Callback status is optional so this panel also works with isolated embedding/test contexts.
+  const { authLinkError, authLinkNotice, clearAuthLinkStatus } = context as typeof context & {
+    authLinkError?: string;
+    authLinkNotice?: string;
+    clearAuthLinkStatus?: () => void;
+  };
+  const [screen, setScreen] = useState<Screen>(initialScreen);
   const [email, setEmail] = useState('');
+  const [confirmationEmail, setConfirmationEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [nickname, setNickname] = useState(profile?.nickname ?? '');
   const [region, setRegion] = useState(profile?.region ?? 'India');
   const [bio, setBio] = useState(profile?.bio ?? '');
   const [adult, setAdult] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fields, setFields] = useState<Fields>({});
   const [success, setSuccess] = useState('');
+  const [recovered, setRecovered] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const [blocked, setBlocked] = useState<Profile[]>([]);
   const [blockedError, setBlockedError] = useState('');
   const [blockedLoading, setBlockedLoading] = useState(false);
   const [blockedRefresh, setBlockedRefresh] = useState(0);
+  const mounted = useRef(true);
+  const locked = useRef(false);
+  const revision = useRef(0);
+  const identity = `${mode}-${session?.user.id ?? profile?.id ?? 'guest'}`;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
+  const seconds = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      revision.current++;
+    };
+  }, []);
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownUntil]);
   useEffect(() => {
     if (profile) {
       setNickname(profile.nickname);
@@ -51,88 +148,231 @@ export default function AccountPanel({
     }
   }, [profile]);
   useEffect(() => {
-    let current = true;
+    let active = true;
     if (!profile) return;
     setBlockedLoading(true);
     setBlockedError('');
     repository
       .listBlocked()
       .then((value) => {
-        if (current) setBlocked(value);
+        if (active) setBlocked(value);
       })
       .catch((cause) => {
-        if (current) setBlockedError(errorMessage(cause));
+        if (active) setBlockedError(errorMessage(cause));
       })
       .finally(() => {
-        if (current) setBlockedLoading(false);
+        if (active) setBlockedLoading(false);
       });
     return () => {
-      current = false;
+      active = false;
     };
   }, [repository, profile?.id, blockedRefresh]);
-
-  const run = async (action: () => Promise<void>) => {
+  async function run<T>(action: () => Promise<T>, done?: (value: T) => void) {
+    if (locked.current) return;
+    locked.current = true;
+    const ticket = ++revision.current;
+    const owner = identity;
+    const current = () =>
+      mounted.current && ticket === revision.current && owner === currentIdentity.current;
     setBusy(true);
     setError('');
     setSuccess('');
     try {
-      await action();
+      const value = await action();
+      if (current()) done?.(value);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (current()) {
+        setError(authErrorMessage(cause));
+        setUnconfirmed(
+          typeof cause === 'object' &&
+            cause !== null &&
+            'code' in cause &&
+            cause.code === 'email_not_confirmed',
+        );
+      }
     } finally {
-      setBusy(false);
+      locked.current = false;
+      if (current()) setBusy(false);
     }
-  };
-  const submitAuth = (event: FormEvent) => {
-    event.preventDefault();
-    void run(async () => {
-      if (recovery) {
-        await updatePassword(password);
-        clearRecovery();
-        setPassword('');
-        setSuccess('Your password has been updated.');
-        onNotice('Password updated.');
-        return;
-      }
-      if (screen === 'reset') {
-        await sendPasswordReset(email);
-        setSuccess('If an account matches this email, a reset link will arrive shortly.');
-        return;
-      }
-      if (screen === 'signup') {
-        if (!adult) throw new Error('You must be at least 18 to join this community.');
-        const result = await signUp(email, password, nickname, region);
-        setPassword('');
-        if (result.needsConfirmation)
-          setSuccess('Check your email to confirm your account, then come back to sign in.');
-        else onNotice('Welcome to Kindred. Your space to be heard.');
-      } else {
-        await signIn(email, password);
-        setPassword('');
-        onNotice('Welcome back.');
-      }
-    });
-  };
-  const saveProfile = (event: FormEvent) => {
-    event.preventDefault();
-    void run(async () => {
-      await repository.saveProfile({ nickname, region, bio });
-      await refreshProfile();
-      setSuccess('Your profile has been saved.');
-      onNotice('Profile updated.');
-    });
-  };
-  const switchScreen = (next: typeof screen) => {
+  }
+  function switchScreen(next: Screen) {
+    if (locked.current) return;
+    revision.current++;
+    clearAuthLinkStatus?.();
     setScreen(next);
+    setFields({});
     setError('');
     setSuccess('');
     setPassword('');
-  };
-
+    setConfirmPassword('');
+    setUnconfirmed(false);
+  }
+  function validate(): boolean {
+    const next: Fields = {};
+    if (!recovery && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      next.email = 'Enter a valid email address.';
+    if (recovery || screen === 'signup') {
+      try {
+        validateNewPassword(password);
+      } catch (cause) {
+        next.password = authErrorMessage(cause);
+      }
+      if (password !== confirmPassword) next.confirm = 'The passwords do not match.';
+    } else if (screen === 'signin' && !password) next.password = 'Enter your password.';
+    if (!recovery && screen === 'signup') {
+      if (nickname.trim().length < 2 || nickname.trim().length > 40)
+        next.nickname = 'Choose a nickname between 2 and 40 characters.';
+      if (!adult) next.adult = 'You must be 18 or older to join this community.';
+    }
+    setFields(next);
+    setError(Object.keys(next).length ? 'Please check the highlighted fields below.' : '');
+    return Object.keys(next).length === 0;
+  }
+  function submitAuth(event: FormEvent) {
+    event.preventDefault();
+    if (locked.current || !validate()) return;
+    if (recovery) {
+      void run(
+        () => updatePassword(password),
+        () => {
+          setRecovered(true);
+          setPassword('');
+          setConfirmPassword('');
+          onNotice('Your password has been updated.');
+        },
+      );
+      return;
+    }
+    if (screen === 'reset') {
+      void run(
+        () => sendPasswordReset(email),
+        () =>
+          setSuccess(
+            'If an account matches this email, a reset link will arrive shortly. Check your inbox and spam folder.',
+          ),
+      );
+      return;
+    }
+    if (screen === 'signup') {
+      void run(
+        () => signUp(email, password, nickname, region),
+        (result) => {
+          setPassword('');
+          setConfirmPassword('');
+          if (result.needsConfirmation) {
+            setConfirmationEmail(email.trim());
+            setScreen('confirmation');
+            setCooldownUntil(Date.now() + 60_000);
+            setNow(Date.now());
+          } else {
+            onNotice('Welcome to Kindred. Your space to be heard.');
+            onClose();
+          }
+        },
+      );
+      return;
+    }
+    void run(
+      () => signIn(email, password),
+      () => {
+        setPassword('');
+        onNotice('Welcome back.');
+        onClose();
+      },
+    );
+  }
+  function resend() {
+    if (locked.current || Date.now() < cooldownUntil) return;
+    const address = screen === 'confirmation' ? confirmationEmail : email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      setFields({ email: 'Enter a valid email address.' });
+      return;
+    }
+    setCooldownUntil(Date.now() + 60_000);
+    setNow(Date.now());
+    void run(
+      () => resendConfirmation(address),
+      () =>
+        setSuccess(
+          'If this address needs confirmation, a new link will arrive shortly. Check your inbox and spam folder.',
+        ),
+    );
+  }
+  function saveProfile(event: FormEvent) {
+    event.preventDefault();
+    if (nickname.trim().length < 2 || nickname.trim().length > 40) {
+      setFields({ nickname: 'Choose a nickname between 2 and 40 characters.' });
+      return;
+    }
+    void run(
+      async () => {
+        await repository.saveProfile({ nickname, region, bio });
+        await refreshProfile();
+      },
+      () => {
+        setSuccess('Your profile has been saved.');
+        onNotice('Profile updated.');
+      },
+    );
+  }
+  const emailField = (
+    <label className="field">
+      Email
+      <input
+        type="email"
+        autoComplete="email"
+        required
+        value={email}
+        disabled={busy}
+        aria-invalid={!!fields.email}
+        aria-describedby={fields.email ? 'account-email-error' : undefined}
+        onChange={(event) => setEmail(event.target.value)}
+      />
+      {fields.email && (
+        <span id="account-email-error" className="account-field-error">
+          {fields.email}
+        </span>
+      )}
+    </label>
+  );
+  const nicknameField = (
+    <label className="field">
+      Nickname
+      <input
+        autoComplete="nickname"
+        value={nickname}
+        onChange={(event) => setNickname(event.target.value)}
+        minLength={2}
+        maxLength={40}
+        required
+        disabled={busy}
+        aria-invalid={!!fields.nickname}
+      />
+      {fields.nickname && <span className="account-field-error">{fields.nickname}</span>}
+    </label>
+  );
+  const regionField = (
+    <label className="field">
+      Your region
+      <select value={region} disabled={busy} onChange={(event) => setRegion(event.target.value)}>
+        {REGIONS.map((value) => (
+          <option key={value}>{value}</option>
+        ))}
+      </select>
+    </label>
+  );
   return (
     <Modal
       title={
-        recovery ? 'Choose a new password' : profile ? 'Your little corner' : 'Welcome to Kindred'
+        recovery
+          ? 'Choose a new password'
+          : profile
+            ? 'Your little corner'
+            : screen === 'confirmation'
+              ? 'Check your inbox'
+              : screen === 'reset'
+                ? 'Let’s get you back in'
+                : 'Welcome to Kindred'
       }
       onClose={onClose}
     >
@@ -141,10 +381,25 @@ export default function AccountPanel({
           {error}
         </p>
       )}
+      {authLinkError && (
+        <p className="error-message" role="alert">
+          {authLinkError} You can sign in, request a fresh confirmation email, or reset your
+          password below.
+        </p>
+      )}
+      {authLinkNotice && (
+        <p className="panel-success" role="status">
+          {authLinkNotice}
+        </p>
+      )}
       {contextError && (
         <p className="error-message" role="alert">
           {contextError}{' '}
-          <button className="panel-text-button" onClick={() => void refreshProfile()}>
+          <button
+            className="panel-text-button"
+            disabled={busy}
+            onClick={() => void run(refreshProfile)}
+          >
             Retry
           </button>
         </p>
@@ -155,24 +410,48 @@ export default function AccountPanel({
         </p>
       )}
       {recovery ? (
-        <form className="form-stack" onSubmit={submitAuth}>
-          <p className="muted">Set a new password for your account.</p>
-          <label className="field">
-            New password
-            <input
-              type="password"
-              autoComplete="new-password"
-              minLength={10}
-              required
+        recovered ? (
+          <div className="account-complete">
+            <CheckCircle2 size={42} />
+            <h3>A fresh start.</h3>
+            <p>Your password is updated. You can return to your community.</p>
+            <button
+              className="button primary"
+              onClick={() => {
+                clearRecovery();
+                onClose();
+              }}
+            >
+              Continue to Kindred
+            </button>
+          </div>
+        ) : (
+          <form className="form-stack" noValidate onSubmit={submitAuth}>
+            <p className="muted">Choose a password you haven’t used elsewhere.</p>
+            <PasswordField
+              label="New password"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={setPassword}
+              error={fields.password}
+              fresh
+              disabled={busy}
             />
-          </label>
-          <small className="muted">At least 10 characters.</small>
-          <button className="button primary" disabled={busy}>
-            {busy ? 'Updating…' : 'Update password'}
-          </button>
-        </form>
+            <PasswordField
+              label="Confirm new password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              error={fields.confirm}
+              fresh
+              disabled={busy}
+            />
+            <p className="panel-help">
+              Use at least 10 characters. A unique phrase can be easier to remember.
+            </p>
+            <button className="button primary" disabled={busy}>
+              {busy ? 'Updating…' : 'Update password'}
+            </button>
+          </form>
+        )
       ) : profile ? (
         <>
           <div className="account-intro">
@@ -191,38 +470,15 @@ export default function AccountPanel({
               You are exploring sample content. Demo changes stay in this browser; no real messages
               are sent.{' '}
               {configured && (
-                <button
-                  className="panel-text-button"
-                  onClick={() => {
-                    setError('');
-                    enterLive();
-                  }}
-                >
+                <button className="panel-text-button" disabled={busy} onClick={enterLive}>
                   Use a real account
                 </button>
               )}
             </div>
           )}
-          <form className="form-stack" onSubmit={saveProfile}>
-            <label className="field">
-              Nickname
-              <input
-                value={nickname}
-                onChange={(event) => setNickname(event.target.value)}
-                minLength={2}
-                maxLength={40}
-                required
-                autoComplete="nickname"
-              />
-            </label>
-            <label className="field">
-              Your region
-              <select value={region} onChange={(event) => setRegion(event.target.value)}>
-                {REGIONS.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
-            </label>
+          <form className="form-stack" noValidate onSubmit={saveProfile}>
+            {nicknameField}
+            {regionField}
             <p className="panel-help">
               Your nickname, region, and bio are visible to signed-in members. Share only what feels
               comfortable.
@@ -231,6 +487,7 @@ export default function AccountPanel({
               A little about you <span className="muted">(optional)</span>
               <textarea
                 value={bio}
+                disabled={busy}
                 onChange={(event) => setBio(event.target.value)}
                 maxLength={300}
                 rows={3}
@@ -243,7 +500,8 @@ export default function AccountPanel({
           </form>
           <section className="account-section">
             <h3>
-              <ShieldCheck size={18} /> Your boundaries
+              <ShieldCheck size={18} />
+              Your boundaries
             </h3>
             <p className="muted">
               Blocked members cannot interact with you. Unblocking lets them connect again.
@@ -272,11 +530,13 @@ export default function AccountPanel({
                       className="button ghost"
                       disabled={busy}
                       onClick={() =>
-                        void run(async () => {
-                          await repository.unblockUser(member.id);
-                          setBlockedRefresh((value) => value + 1);
-                          onNotice('Member unblocked.');
-                        })
+                        void run(
+                          () => repository.unblockUser(member.id),
+                          () => {
+                            setBlockedRefresh((value) => value + 1);
+                            onNotice('Member unblocked.');
+                          },
+                        )
                       }
                     >
                       Unblock
@@ -291,14 +551,14 @@ export default function AccountPanel({
               className="button ghost account-signout"
               disabled={busy}
               onClick={() =>
-                void run(async () => {
-                  await logout();
+                void run(logout, () => {
                   onNotice('You have signed out.');
                   onClose();
                 })
               }
             >
-              <LogOut size={17} /> Sign out
+              <LogOut size={17} />
+              Sign out
             </button>
           )}
         </>
@@ -317,17 +577,56 @@ export default function AccountPanel({
           >
             Retry profile setup
           </button>
-          <button
-            className="button ghost"
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                await logout();
-                onNotice('You have signed out.');
-              })
-            }
-          >
+          <button className="button ghost" disabled={busy} onClick={() => void run(logout)}>
             Sign out
+          </button>
+        </div>
+      ) : !configured ? (
+        <div className="panel-note">
+          Real accounts will be available when this project is connected to its database. You can
+          explore the fictional local community now.
+          <button
+            className="button primary"
+            onClick={() => {
+              enterDemo();
+              onClose();
+            }}
+          >
+            Explore the demo
+          </button>
+        </div>
+      ) : screen === 'confirmation' ? (
+        <div className="account-complete">
+          <MailCheck size={44} />
+          <h3>One small step to your community.</h3>
+          <p>
+            If this address is eligible, a confirmation link has been sent to{' '}
+            <strong>{confirmationEmail}</strong>. Open it to finish joining, then sign in.
+          </p>
+          <p className="panel-help">
+            Check spam or promotions, too. For your privacy, this message does not confirm whether
+            an account already exists.
+          </p>
+          <button className="button primary" disabled={busy || seconds > 0} onClick={resend}>
+            {seconds > 0
+              ? `Resend available in ${seconds}s`
+              : busy
+                ? 'Sending…'
+                : 'Resend confirmation email'}
+          </button>
+          <button
+            className="panel-text-button"
+            disabled={busy}
+            onClick={() => switchScreen('signin')}
+          >
+            Back to sign in
+          </button>
+          <button
+            className="panel-text-button"
+            disabled={busy}
+            onClick={() => switchScreen('signup')}
+          >
+            Use a different email
           </button>
         </div>
       ) : (
@@ -336,136 +635,125 @@ export default function AccountPanel({
             <UserRound size={29} />
             <p>A place to share what’s on your mind, and find people who listen.</p>
           </div>
-          {!configured ? (
-            <div className="panel-note">
-              Real accounts will be available when this project is connected to its database. You
-              can explore the fictional local community now.
-              <button
-                className="button primary"
-                onClick={() => {
-                  enterDemo();
-                  onClose();
-                }}
-              >
-                Explore the demo
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="panel-tabs" aria-label="Account options">
-                <button
-                  type="button"
-                  className={screen === 'signin' ? 'active' : ''}
-                  onClick={() => switchScreen('signin')}
-                >
-                  Sign in
-                </button>
-                <button
-                  type="button"
-                  className={screen === 'signup' ? 'active' : ''}
-                  onClick={() => switchScreen('signup')}
-                >
-                  Join the community
-                </button>
-              </div>
-              <form className="form-stack" onSubmit={submitAuth}>
-                {screen === 'reset' && (
-                  <p className="muted">We’ll email you a link to choose a new password.</p>
-                )}
-                <label className="field">
-                  Email
+          <div className="panel-tabs" aria-label="Account options">
+            <button
+              type="button"
+              disabled={busy}
+              className={screen === 'signin' ? 'active' : ''}
+              aria-current={screen === 'signin' ? 'page' : undefined}
+              onClick={() => switchScreen('signin')}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              className={screen === 'signup' ? 'active' : ''}
+              aria-current={screen === 'signup' ? 'page' : undefined}
+              onClick={() => switchScreen('signup')}
+            >
+              Join the community
+            </button>
+          </div>
+          <form className="form-stack" noValidate onSubmit={submitAuth}>
+            {screen === 'reset' && (
+              <p className="muted">We’ll email you a link to choose a new password.</p>
+            )}
+            {emailField}
+            {screen !== 'reset' && (
+              <PasswordField
+                label="Password"
+                value={password}
+                onChange={setPassword}
+                error={fields.password}
+                fresh={screen === 'signup'}
+                disabled={busy}
+              />
+            )}
+            {screen === 'signup' && (
+              <>
+                <PasswordField
+                  label="Confirm password"
+                  value={confirmPassword}
+                  onChange={setConfirmPassword}
+                  error={fields.confirm}
+                  fresh
+                  disabled={busy}
+                />
+                <p className="panel-help">Use a unique password with at least 10 characters.</p>
+                {nicknameField}
+                <p className="panel-help">
+                  Choose any nickname. Your real name is not required, and your email stays private.
+                </p>
+                {regionField}
+                <label className="panel-checkbox">
                   <input
-                    type="email"
-                    autoComplete="email"
+                    type="checkbox"
+                    checked={adult}
+                    onChange={(event) => setAdult(event.target.checked)}
+                    disabled={busy}
+                    aria-invalid={!!fields.adult}
                     required
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
                   />
+                  <span>
+                    I’m 18 or older and agree to treat people with kindness and respect their
+                    boundaries.
+                  </span>
                 </label>
-                {screen !== 'reset' && (
-                  <label className="field">
-                    Password
-                    <input
-                      type="password"
-                      autoComplete={screen === 'signup' ? 'new-password' : 'current-password'}
-                      minLength={screen === 'signup' ? 10 : undefined}
-                      required
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                    />
-                    {screen === 'signup' && (
-                      <small className="muted">At least 10 characters.</small>
-                    )}
-                  </label>
-                )}
-                {screen === 'signup' && (
-                  <>
-                    <label className="field">
-                      Nickname
-                      <input
-                        autoComplete="nickname"
-                        value={nickname}
-                        onChange={(event) => setNickname(event.target.value)}
-                        minLength={2}
-                        maxLength={40}
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      Your region
-                      <select value={region} onChange={(event) => setRegion(event.target.value)}>
-                        {REGIONS.map((value) => (
-                          <option key={value}>{value}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="panel-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={adult}
-                        onChange={(event) => setAdult(event.target.checked)}
-                        required
-                      />
-                      <span>
-                        I’m 18 or older and agree to treat people with kindness and respect their
-                        boundaries.
-                      </span>
-                    </label>
-                    <p className="panel-help">
-                      Kindred is a peer-support community. Members are not providing professional
-                      care.
-                    </p>
-                  </>
-                )}
-                <button className="button primary" disabled={busy}>
-                  {busy
-                    ? 'One moment…'
-                    : screen === 'signup'
-                      ? 'Create account'
-                      : screen === 'reset'
-                        ? 'Send reset link'
-                        : 'Sign in'}
-                </button>
-              </form>
-              {screen === 'signin' && (
-                <button
-                  className="panel-text-button account-forgot"
-                  onClick={() => switchScreen('reset')}
-                >
-                  Forgot your password?
-                </button>
-              )}
+                {fields.adult && <span className="account-field-error">{fields.adult}</span>}
+                <p className="panel-help">
+                  Kindred is a peer-support community. Members are not providing professional care.
+                </p>
+              </>
+            )}
+            <button className="button primary" disabled={busy}>
+              {busy
+                ? 'One moment…'
+                : screen === 'signup'
+                  ? 'Create account'
+                  : screen === 'reset'
+                    ? 'Send reset link'
+                    : 'Sign in'}
+            </button>
+          </form>
+          {(unconfirmed || authLinkError) && (
+            <button
+              className="panel-text-button account-forgot"
+              disabled={busy || seconds > 0}
+              onClick={resend}
+            >
+              {seconds > 0 ? `Resend available in ${seconds}s` : 'Resend confirmation email'}
+            </button>
+          )}
+          {screen === 'signin' ? (
+            <button
+              className="panel-text-button account-forgot"
+              disabled={busy}
+              onClick={() => switchScreen('reset')}
+            >
+              Forgot your password?
+            </button>
+          ) : (
+            screen === 'reset' && (
               <button
                 className="panel-text-button account-forgot"
-                onClick={() => {
-                  enterDemo();
-                  onClose();
-                }}
+                disabled={busy}
+                onClick={() => switchScreen('signin')}
               >
-                Explore the demo
+                Back to sign in
               </button>
-            </>
+            )
           )}
+          <button
+            className="panel-text-button account-forgot"
+            disabled={busy}
+            onClick={() => {
+              enterDemo();
+              onClose();
+            }}
+          >
+            Explore the demo
+          </button>
         </>
       )}
     </Modal>

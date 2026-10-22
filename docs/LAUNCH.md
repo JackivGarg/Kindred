@@ -1,7 +1,8 @@
 # Before inviting a public community
 
 This repository is a working pilot, not a declaration of operational readiness.
-Azure deployment remains deferred. Recheck this document against the final
+Azure deployment tooling is available in [DEPLOY.md](DEPLOY.md); no site has been
+published yet. Recheck this document against the final
 deployment and account settings before marketing the application.
 
 ## What is implemented

@@ -12,7 +12,7 @@ import type { Session } from '@supabase/supabase-js';
 import { DemoRepository } from './demo-repository';
 import { SupabaseRepository } from './live-repository';
 import { supabase, isConfigured } from './supabase';
-import { getSession, onAuthChange, signOut as endSession } from './auth';
+import { finishAuthCallback, getSession, onAuthChange, signOut as endSession } from './auth';
 import { type CommunityRepository, type Profile } from './types';
 
 interface CommunityContextValue {
@@ -24,6 +24,9 @@ interface CommunityContextValue {
   loading: boolean;
   error: string;
   recovery: boolean;
+  authLinkError: string;
+  authLinkNotice: string;
+  clearAuthLinkStatus(): void;
   clearRecovery(): void;
   refreshProfile(): Promise<void>;
   enterDemo(): void;
@@ -44,12 +47,15 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [authError, setAuthError] = useState('');
   const [recovery, setRecovery] = useState(false);
+  const [authLinkError, setAuthLinkError] = useState('');
+  const [authLinkNotice, setAuthLinkNotice] = useState('');
   const live = useMemo(() => (supabase ? new SupabaseRepository(supabase) : null), []);
   const demo = useMemo(() => new DemoRepository(), []);
   const repository = mode === 'live' && live ? live : demo;
   const generation = useRef(0);
   const sessionIdentity = useRef<string | null>(null);
   const authRevision = useRef(0);
+  const lastAuthEvent = useRef<string | null>(null);
   const profileRequest = useRef<{
     repository: typeof repository;
     uid: string | null;
@@ -74,6 +80,7 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
     const unsubscribe = onAuthChange((value, event) => {
       if (!current) return;
       authRevision.current++;
+      lastAuthEvent.current = event;
       applySession(value);
       setAuthError('');
       setAuthReady(true);
@@ -83,6 +90,48 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
         setMode('live');
       }
     });
+    // Subscribe first: email-link initialization may emit before the app mounts.
+    // The callback helper also recovers a verified recovery event missed at startup.
+    void finishAuthCallback()
+      .then((result) => {
+        if (!current || result.kind === 'none') return;
+        if (result.kind === 'error') {
+          setAuthLinkError(
+            result.error?.message ??
+              'This email link could not be completed. Request a fresh link.',
+          );
+          return;
+        }
+        const stillCurrent = authRevision.current === startupRevision;
+        if (result.session && stillCurrent) {
+          authRevision.current++;
+          applySession(result.session);
+          setAuthReady(true);
+          setMode('live');
+        }
+        if (
+          result.kind === 'recovery' &&
+          result.session &&
+          (stillCurrent ||
+            (lastAuthEvent.current === 'INITIAL_SESSION' &&
+              sessionIdentity.current === result.session.user.id))
+        ) {
+          setRecovery(true);
+          setMode('live');
+        } else if (
+          result.kind === 'confirmation' &&
+          result.session &&
+          (stillCurrent ||
+            (lastAuthEvent.current === 'INITIAL_SESSION' &&
+              sessionIdentity.current === result.session.user.id))
+        ) {
+          setAuthLinkNotice('Your email is confirmed. Welcome to Kindred.');
+        }
+      })
+      .catch(() => {
+        if (current)
+          setAuthLinkError('This email link could not be completed. Please request a fresh link.');
+      });
     // Any event after subscription is newer than the startup snapshot.
     getSession()
       .then((value) => {
@@ -170,6 +219,8 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
     setMode('demo');
     setError('');
     setRecovery(false);
+    setAuthLinkError('');
+    setAuthLinkNotice('');
   };
   const enterLive = () => {
     if (!isConfigured) throw new Error('Connect your Supabase project to create an account.');
@@ -200,6 +251,12 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
         loading: loading || identityLoading || (mode === 'live' && !authReady),
         error: mode === 'live' ? authError || error : error,
         recovery,
+        authLinkError,
+        authLinkNotice,
+        clearAuthLinkStatus: () => {
+          setAuthLinkError('');
+          setAuthLinkNotice('');
+        },
         clearRecovery: () => setRecovery(false),
         refreshProfile,
         enterDemo,

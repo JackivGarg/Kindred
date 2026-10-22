@@ -31,7 +31,7 @@ Both variables must be empty for demo mode or valid for live mode. Partial or in
 
 ## 3. Configure authentication
 
-Enable email authentication in Supabase. Set the Auth Site URL and allowed redirect URLs to the exact local app origin printed by Vite. Preserve email confirmation for public registration; confirm your test account using the email link before signing in. When deployment is planned, add its exact origin and verify confirmation and password-reset flows there.
+Enable email authentication in Supabase. Set Auth Site URL to the exact local app origin printed by Vite and add `<that origin>/auth/callback` to allowed redirect URLs. Preserve email confirmation for public registration; confirm your test account using the email link before signing in. Configure [custom SMTP](EMAIL-SETUP.md) for public recipients. For deployment, use the exact final origin and callback URL from [Azure deployment](DEPLOY.md), and verify confirmation and password-reset flows there.
 
 The signup flow collects a nickname and chosen region. The schema creates a corresponding profile for new accounts. Test with two separately registered accounts to exercise request acceptance, replies and blocks. A third account is useful for checking conversation isolation.
 
@@ -53,7 +53,7 @@ Run `npm test` and `npm run build`. With the connected database, verify two-acco
 
 Decide who handles reports and how often, publish understandable community rules, and establish account/data deletion procedures before a wider launch. Regional posts are discoverable by region, not confidential regional rooms. DMs are not end-to-end encrypted.
 
-Azure deployment is a later step; this guide does not provision or publish an Azure resource.
+Follow [Azure deployment](DEPLOY.md) when ready to publish. This setup guide does not provision or publish an Azure resource.
 
 The Azure Static Web Apps response-header template is `public/staticwebapp.config.json`.
 Its `connect-src` policy currently names the dedicated Kindred Supabase project.

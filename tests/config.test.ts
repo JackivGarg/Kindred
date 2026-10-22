@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateSupabaseConfig } from '../src/lib/supabase';
+import { validateSupabaseConfig, validateAppOrigin } from '../src/lib/supabase';
 
 const key = 'sb_publishable_abcdefghijk123456';
 describe('Supabase browser configuration', () => {
@@ -37,5 +37,23 @@ describe('Supabase browser configuration', () => {
     'not a url',
   ])('rejects invalid project URL %s', (url) => {
     expect(() => validateSupabaseConfig(url, key)).toThrow();
+  });
+});
+
+describe('application redirect origin', () => {
+  it('defaults to the current origin and supports local development and HTTPS deployment', () => {
+    expect(validateAppOrigin()).toBeNull();
+    expect(validateAppOrigin('https://kindred.example/')).toBe('https://kindred.example');
+    expect(validateAppOrigin('http://localhost:3000')).toBe('http://localhost:3000');
+  });
+  it.each([
+    'http://kindred.example',
+    'https://kindred.example/path',
+    'https://user:password@kindred.example',
+    'https://kindred.example?next=evil',
+    '//evil.example',
+    'javascript:alert(1)',
+  ])('rejects unsafe redirect origin %s', (value) => {
+    expect(() => validateAppOrigin(value)).toThrow('VITE_APP_URL');
   });
 });

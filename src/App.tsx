@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   BookOpen,
@@ -75,6 +75,9 @@ export default function App() {
     loading,
     error,
     recovery,
+    authLinkError,
+    authLinkNotice,
+    clearAuthLinkStatus,
     enterDemo,
     enterLive,
     logout,
@@ -84,6 +87,7 @@ export default function App() {
     'community',
   );
   const [account, setAccount] = useState(false);
+  const [accountIntent, setAccountIntent] = useState<'signin' | 'signup'>('signin');
   const [info, setInfo] = useState<'guidelines' | 'resources' | null>(null);
   const [toast, setToast] = useState('');
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -91,6 +95,7 @@ export default function App() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [conversation, setConversation] = useState<string>();
   const [moderator, setModerator] = useState(false);
+  const previousSession = useRef({ mode, uid: session?.user.id ?? null });
   const identity = `${mode}-${profile?.id ?? session?.user.id ?? 'signed-out'}`;
   useEffect(() => {
     setConversation(undefined);
@@ -98,6 +103,22 @@ export default function App() {
     setDebouncedSearch('');
     setToast('');
   }, [identity]);
+  useEffect(() => {
+    const uid = session?.user.id ?? null;
+    const previous = previousSession.current;
+    if (
+      mode === 'live' &&
+      previous.mode === 'live' &&
+      previous.uid !== uid &&
+      !recovery &&
+      !authLinkError &&
+      !authLinkNotice
+    ) {
+      setAccount(false);
+      if (uid) setToast('Welcome to Kindred. Your space to be heard.');
+    }
+    previousSession.current = { mode, uid };
+  }, [mode, session?.user.id, recovery, authLinkError, authLinkNotice]);
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 300);
     return () => window.clearTimeout(timer);
@@ -122,8 +143,11 @@ export default function App() {
     };
   }, [repository, profile]);
   useEffect(() => {
-    if (recovery) setAccount(true);
-  }, [recovery]);
+    if (recovery || authLinkError || authLinkNotice) {
+      setAccountIntent('signin');
+      setAccount(true);
+    }
+  }, [recovery, authLinkError, authLinkNotice]);
   const signedIn = !!profile && (mode === 'demo' || !!session);
   function navigate(next: typeof page) {
     setPage(next);
@@ -132,11 +156,20 @@ export default function App() {
   function join() {
     try {
       enterLive();
+      setAccountIntent('signup');
       setAccount(true);
       setPage('community');
     } catch (err) {
       setToast(errorMessage(err));
     }
+  }
+  function openAccount() {
+    setAccountIntent('signin');
+    setAccount(true);
+  }
+  function closeAccount() {
+    setAccount(false);
+    clearAuthLinkStatus();
   }
   function openMessage(id: string) {
     setConversation(id);
@@ -229,7 +262,7 @@ export default function App() {
         </div>
         <div className="sidebar-bottom">
           {profile ? (
-            <button className="profile-button" onClick={() => setAccount(true)}>
+            <button className="profile-button" onClick={openAccount}>
               <Avatar profile={profile} size="sm" />
               <span>
                 <strong>{profile.nickname}</strong>
@@ -307,11 +340,7 @@ export default function App() {
                 )}
               </label>
             )}
-            <button
-              className="topbar-profile"
-              aria-label="Open your account"
-              onClick={() => setAccount(true)}
-            >
+            <button className="topbar-profile" aria-label="Open your account" onClick={openAccount}>
               {profile ? <Avatar profile={profile} size="sm" /> : <UserRound size={20} />}
             </button>
           </div>
@@ -374,7 +403,7 @@ export default function App() {
                 <button className="button primary" onClick={() => void refreshProfile()}>
                   Try again
                 </button>
-                <button className="button ghost" onClick={() => setAccount(true)}>
+                <button className="button ghost" onClick={openAccount}>
                   Open account
                 </button>
               </div>
@@ -535,12 +564,20 @@ export default function App() {
       {account && (
         <Suspense
           fallback={
-            <Modal title="Your little corner" onClose={() => setAccount(false)}>
+            <Modal
+              title={profile ? 'Your little corner' : 'Welcome to Kindred'}
+              onClose={closeAccount}
+            >
               <PanelLoading />
             </Modal>
           }
         >
-          <AccountPanel key={identity} onClose={() => setAccount(false)} onNotice={setToast} />
+          <AccountPanel
+            key={`${identity}-${accountIntent}`}
+            initialScreen={accountIntent}
+            onClose={closeAccount}
+            onNotice={setToast}
+          />
         </Suspense>
       )}
       {info && (

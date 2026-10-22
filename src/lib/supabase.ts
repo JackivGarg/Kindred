@@ -1,9 +1,42 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { readAuthCallback } from './auth-callback';
 
 export interface SupabaseConfig {
   url: string;
   key: string;
 }
+
+export function validateAppOrigin(rawOrigin?: string): string | null {
+  if (!rawOrigin?.trim()) return null;
+  let url: URL;
+  try {
+    url = new URL(rawOrigin.trim());
+  } catch {
+    throw new Error('VITE_APP_URL must be a valid application origin.');
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (
+    (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !['', '/'].includes(url.pathname)
+  )
+    throw new Error(
+      'VITE_APP_URL must be an HTTPS origin without a path (HTTP is allowed for localhost).',
+    );
+  return url.origin;
+}
+const appOrigin = validateAppOrigin(import.meta.env.VITE_APP_URL);
+export function getAuthRedirectUrl(): string {
+  return `${appOrigin ?? window.location.origin}/auth/callback`;
+}
+// Capture safe intent before createClient begins consuming the location hash.
+export const initialAuthCallback =
+  typeof window === 'undefined'
+    ? { kind: 'none' as const }
+    : readAuthCallback(window.location.href);
 
 /** Missing settings enable the local demo; invalid settings must never hide an outage. */
 export function validateSupabaseConfig(rawUrl?: string, rawKey?: string): SupabaseConfig | null {
@@ -49,6 +82,11 @@ const config = validateSupabaseConfig(
 export const isConfigured = config !== null;
 export const supabase: SupabaseClient | null = config
   ? createClient(config.url, config.key, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'implicit',
+      },
     })
   : null;

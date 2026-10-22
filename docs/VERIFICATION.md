@@ -2,7 +2,7 @@
 
 ## Automated checks
 
-- 87 tests passed across 14 files (Vitest).
+- 129 tests passed across 19 files (Vitest), with bounded worker concurrency.
 - The SQL permission suite runs the actual tables, policies, grants and triggers
   in PostgreSQL via PGlite, including the database upgrades and query optimization.
 - The same permission suite passed against the dedicated Supabase project in a
@@ -16,6 +16,11 @@
   tested table. Local timings do not establish hosted capacity; see `PERFORMANCE.md`.
 - Request-count regressions verify local feed updates, bounded incremental inbox
   reads, offline/hidden polling suspension and account-isolated state.
+- Account checks cover signup validation, duplicate-submission protection,
+  confirmation resend, recovery, sanitized callback errors and session races.
+- Deployment preflight checks enforce the dedicated project, public keys,
+  verified-email signup, exact production origin and matching built assets.
+  SMTP delivery and redirect allowlists remain explicitly unchecked.
 
 ## Browser checks
 
@@ -28,6 +33,10 @@ the live signup screen. No real user emails or messages were submitted.
 The production bundle was served separately and checked for feed rendering,
 working search, local fonts and lazy-loaded account/inbox panels. The fictional
 demo is explicitly labeled and is separate from live data.
+
+The production signup dialog opens directly from Join community. Empty signup
+submissions show field errors. An expired confirmation callback returns to a
+clean URL with a safe retry message; provider diagnostic text is not displayed.
 
 ## Verification limits
 

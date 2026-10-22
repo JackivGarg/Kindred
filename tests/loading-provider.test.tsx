@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/supabase', () => ({ supabase: {}, isConfigured: true }));
 vi.mock('../src/lib/auth', () => ({
+  finishAuthCallback: async () => ({ kind: 'none', session: null }),
   getSession: mocks.getSession,
   onAuthChange: mocks.onAuthChange,
   signOut: vi.fn(),

@@ -41,7 +41,10 @@ Frontend regression tests exercise real React components in jsdom, including
 StrictMode support actions, posting boundaries, duplicate-submit protection,
 recipient consent before messaging, and dialog Escape/focus restoration.
 
-Azure deployment is intentionally deferred. No production deployment is part of this local setup.
+For the release path, follow [Azure deployment](docs/DEPLOY.md). It includes a
+Free-site preparation command, production preflight and a manual deployment
+workflow. Configure [signup email](docs/EMAIL-SETUP.md) once before inviting people.
+No Azure resources are created by running the local app or ordinary checks.
 
 See the [performance measurements](docs/PERFORMANCE.md) and
 [300-member launch preparation](docs/LOAD-READINESS.md) for the tested improvements,

@@ -209,6 +209,70 @@
   display: block;
   margin: 18px auto 0;
 }
+.account-password {
+  position: relative;
+}
+.account-password input {
+  padding-right: 48px;
+}
+.account-password-toggle {
+  position: absolute;
+  inset: 0 4px 0 auto;
+  width: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64805d;
+  border-radius: 7px;
+}
+.account-password-toggle:hover {
+  color: #315f49;
+  background: #e8efdf;
+}
+.account-field-error {
+  font-size: 12px;
+  color: #984c37;
+  line-height: 1.5;
+  font-weight: 400;
+}
+.field input[aria-invalid='true'] {
+  border-color: #b97d63;
+  background: #fff9f3;
+}
+.account-complete {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 17px;
+  padding: 12px 0;
+}
+.account-complete > svg {
+  color: #6b9667;
+  background: #e7efdf;
+  border-radius: 50%;
+  box-sizing: content-box;
+  padding: 17px;
+}
+.account-complete h3 {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 23px;
+  font-weight: 400;
+  color: #456740;
+  line-height: 1.45;
+  margin: 0;
+}
+.account-complete p {
+  font-size: 13px;
+  color: #748267;
+  line-height: 1.8;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.account-complete .button {
+  width: 100%;
+  margin-top: 5px;
+}
 .avatar {
   --avatar-size: 43px;
   display: inline-flex;
