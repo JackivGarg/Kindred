@@ -1,5 +1,7 @@
 # Kindred
 
+[![Project checks](https://github.com/JackivGarg/Kindred/actions/workflows/checks.yml/badge.svg)](https://github.com/JackivGarg/Kindred/actions/workflows/checks.yml)
+
 A mental health peer-support community built with React, TypeScript, Vite and Supabase. People can share a check-in, reply with support, explore global or regional posts, and request a private conversation. Direct messages require the recipient to accept first. Members can report content and block other members.
 
 ## Run locally
@@ -16,6 +18,7 @@ Leave both Supabase environment variables empty to explore the fictional demo. D
 ```sh
 npm test
 npm run build
+npm run check:bundle
 npm run preview
 ```
 
@@ -39,6 +42,10 @@ StrictMode support actions, posting boundaries, duplicate-submit protection,
 recipient consent before messaging, and dialog Escape/focus restoration.
 
 Azure deployment is intentionally deferred. No production deployment is part of this local setup.
+
+See the [performance measurements](docs/PERFORMANCE.md) and
+[300-member launch preparation](docs/LOAD-READINESS.md) for the tested improvements,
+capacity assumptions and email-delivery requirements.
 
 The live inbox currently shows the newest 100 conversations by creation time,
 with the latest 200 messages in an opened conversation. Block management shows

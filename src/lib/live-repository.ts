@@ -6,6 +6,7 @@ import type {
   CreatePostInput,
   FeedFilter,
   Message,
+  MessageCursor,
   Post,
   Profile,
   Report,
@@ -49,10 +50,13 @@ export class SupabaseRepository implements CommunityRepository {
   constructor(private readonly client: SupabaseClient) {}
 
   private async user(): Promise<string> {
-    const { data, error } = await this.client.auth.getUser();
-    check(error, 'Verify your sign-in');
-    if (!data.user) throw new Error('Please sign in to continue.');
-    return data.user.id;
+    // Browser-only query hint, never an authorization decision. PostgREST verifies
+    // the attached access token and RLS checks auth.uid() for every operation.
+    // Re-read SDK state each time so sign-out/account changes have no UID cache.
+    const { data, error } = await this.client.auth.getSession();
+    check(error, 'Read your sign-in');
+    if (!data.session?.user) throw new Error('Please sign in to continue.');
+    return id(data.session.user.id);
   }
 
   async getProfile(): Promise<Profile | null> {
@@ -291,18 +295,39 @@ export class SupabaseRepository implements CommunityRepository {
     return uid;
   }
 
-  async listMessages(conversationId: string): Promise<Message[]> {
-    await this.acceptedConversation(conversationId);
-    const { data, error } = await this.client
+  async listMessages(conversationId: string, after?: MessageCursor): Promise<Message[]> {
+    if (after) {
+      id(after.id);
+      // Preserve PostgreSQL microseconds; Date.toISOString() would round them off.
+      if (
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(
+          after.created_at,
+        ) ||
+        !Number.isFinite(Date.parse(after.created_at))
+      ) {
+        throw new Error('This message cursor is invalid.');
+      }
+    }
+    // RLS already enforces acceptance, participation, blocks and hidden content.
+    // Reads do not need a separate conversation request on every polling tick.
+    await this.user();
+    let query = this.client
       .from('messages')
       .select('id,conversation_id,sender_id,body,created_at')
-      .eq('conversation_id', id(conversationId))
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: false })
+      .eq('conversation_id', id(conversationId));
+    if (after)
+      query = query
+        .gte('created_at', after.created_at)
+        .or(
+          `created_at.gt.${after.created_at},and(created_at.eq.${after.created_at},id.gt.${after.id})`,
+        );
+    const { data, error } = await query
+      .order('created_at', { ascending: !!after })
+      .order('id', { ascending: !!after })
       .limit(200)
       .returns<Message[]>();
     check(error, 'Load your messages');
-    return (data ?? []).reverse();
+    return after ? (data ?? []) : (data ?? []).reverse();
   }
 
   async sendMessage(conversationId: string, body: string): Promise<Message> {

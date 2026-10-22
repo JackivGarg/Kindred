@@ -21,6 +21,7 @@ test('PostgreSQL enforces consent, identity, blocks, moderation and rate limits'
     `);
     await db.exec(await readFile(resolve('supabase/schema.sql'), 'utf8'));
     await db.exec(await readFile(resolve('supabase/moderation-evidence.sql'), 'utf8'));
+    await db.exec(await readFile(resolve('supabase/performance.sql'), 'utf8'));
     // The incremental installation is also safe after the complete fresh schema.
     await db.exec(await readFile(resolve('supabase/profile-trigger.sql'), 'utf8'));
     await db.exec('begin');

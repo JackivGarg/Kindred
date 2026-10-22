@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeft, Flag, MessageCircle, Send, ShieldBan } from 'lucide-react';
 import { errorMessage, useCommunity } from '../lib/community';
-import type { Conversation, Message } from '../lib/types';
+import type { Conversation, Message, MessageCursor } from '../lib/types';
+import { startAdaptivePoll, type PollController } from '../lib/adaptive-poll';
 import Avatar from './Avatar';
 import './panels.css';
+
+function mergeMessages(current: Message[], incoming: Message[]): Message[] {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  return [...byId.values()]
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+    .slice(-200);
+}
 
 export default function Inbox({
   initialConversationId,
@@ -25,7 +34,11 @@ export default function Inbox({
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [messageError, setMessageError] = useState('');
-  const [refresh, setRefresh] = useState(0);
+  const listPoll = useRef<PollController | null>(null);
+  const messagePoll = useRef<PollController | null>(null);
+  const mutationLock = useRef(false);
+  const owner = useRef({ repository, uid: profile?.id });
+  const sameOwner = owner.current.repository === repository && owner.current.uid === profile?.id;
   const [reporting, setReporting] = useState<Message | null>(null);
   const [reportReason, setReportReason] = useState('Harassment or bullying');
   const [blocking, setBlocking] = useState(false);
@@ -33,12 +46,17 @@ export default function Inbox({
   const activeThread = useRef(selectedId);
   activeThread.current = selectedId;
   const actionGeneration = useRef(0);
-  const selected = conversations.find((conversation) => conversation.id === selectedId);
+  const visibleConversations = sameOwner ? conversations : [];
+  const visibleMessages = sameOwner
+    ? messages.filter((message) => message.conversation_id === selectedId)
+    : [];
+  const selected = visibleConversations.find((conversation) => conversation.id === selectedId);
 
   useEffect(() => {
     if (initialConversationId) setSelectedId(initialConversationId);
   }, [initialConversationId]);
   useEffect(() => {
+    owner.current = { repository, uid: profile?.id };
     setConversations([]);
     setMessages([]);
     setSelectedId(initialConversationId ?? '');
@@ -50,10 +68,10 @@ export default function Inbox({
     setReporting(null);
     setBlocking(false);
     setActionError('');
-  }, [selectedId, repository]);
+  }, [selectedId, repository, profile?.id]);
   useEffect(() => {
     let alive = true;
-    let pending = false;
+    let signature = '';
     setLoading(true);
     setError('');
     if (!profile) {
@@ -61,37 +79,45 @@ export default function Inbox({
       setLoading(false);
       return;
     }
-    const load = async () => {
-      if (pending || document.hidden) return;
-      pending = true;
-      try {
-        const items = await repository.listConversations();
-        if (alive) {
-          setConversations(items);
-          setError('');
+    const poll = startAdaptivePoll({
+      delay: 15000,
+      maxDelay: 60000,
+      load: async () => {
+        try {
+          const items = await repository.listConversations();
+          const nextSignature = JSON.stringify(items);
+          const changed = signature !== nextSignature;
+          if (alive) {
+            if (changed) setConversations(items);
+            signature = nextSignature;
+            setError('');
+          }
+          return changed;
+        } finally {
+          if (alive) setLoading(false);
         }
-      } catch (cause) {
-        if (alive) setError(errorMessage(cause));
-      } finally {
-        pending = false;
-        if (alive) setLoading(false);
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 8000);
-    const visible = () => {
-      if (!document.hidden) void load();
-    };
-    document.addEventListener('visibilitychange', visible);
+      },
+      onError: (cause) => {
+        if (alive) {
+          signature = '';
+          setError(errorMessage(cause));
+          setConversations([]);
+          setMessages([]);
+        }
+      },
+    });
+    listPoll.current = poll;
     return () => {
       alive = false;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', visible);
+      poll.stop();
+      if (listPoll.current === poll) listPoll.current = null;
     };
-  }, [repository, profile?.id, refresh]);
+  }, [repository, profile?.id]);
   useEffect(() => {
     let alive = true;
-    let pending = false;
+    let cursor: MessageCursor | undefined;
+    let lastSnapshot = 0;
+    let forceSnapshot = false;
     setMessageError('');
     if (!selectedId || selected?.status !== 'accepted') {
       setMessageLoading(false);
@@ -99,49 +125,79 @@ export default function Inbox({
       return;
     }
     setMessageLoading(true);
-    const load = async () => {
-      if (pending || document.hidden) return;
-      pending = true;
-      try {
-        const items = await repository.listMessages(selectedId);
-        if (alive) {
-          setMessages(items);
-          setMessageError('');
+    const revalidate = () => {
+      forceSnapshot = true;
+    };
+    // Register before the scheduler so a returning tab revalidates removals too.
+    window.addEventListener('focus', revalidate);
+    window.addEventListener('online', revalidate);
+    document.addEventListener('visibilitychange', revalidate);
+    const poll = startAdaptivePoll({
+      delay: 8000,
+      maxDelay: 32000,
+      load: async () => {
+        try {
+          let changed = false;
+          // Catch up in bounded batches without repeatedly transferring the history.
+          for (let batch = 0; batch < 3 && alive; batch++) {
+            const snapshot = forceSnapshot || !cursor || Date.now() - lastSnapshot >= 60000;
+            if (snapshot) forceSnapshot = false;
+            const items = await repository.listMessages(selectedId, snapshot ? undefined : cursor);
+            if (!alive) return false;
+            if (snapshot) {
+              setMessages(items);
+              lastSnapshot = Date.now();
+            }
+            if (items.length) {
+              changed = true;
+              const last = items[items.length - 1];
+              cursor = { created_at: last.created_at, id: last.id };
+              if (!snapshot) setMessages((current) => mergeMessages(current, items));
+            }
+            setMessageError('');
+            if (snapshot || items.length < 200) break;
+          }
+          return changed;
+        } finally {
+          if (alive) setMessageLoading(false);
         }
-      } catch (cause) {
-        if (alive) setMessageError(errorMessage(cause));
-      } finally {
-        pending = false;
-        if (alive) setMessageLoading(false);
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 8000);
-    const visible = () => {
-      if (!document.hidden) void load();
-    };
-    document.addEventListener('visibilitychange', visible);
+      },
+      onError: (cause) => {
+        if (alive) {
+          cursor = undefined;
+          setMessages([]);
+          setMessageError(errorMessage(cause));
+        }
+      },
+    });
+    messagePoll.current = poll;
     return () => {
       alive = false;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', visible);
+      poll.stop();
+      window.removeEventListener('focus', revalidate);
+      window.removeEventListener('online', revalidate);
+      document.removeEventListener('visibilitychange', revalidate);
+      if (messagePoll.current === poll) messagePoll.current = null;
     };
-  }, [repository, selectedId, selected?.status, refresh]);
+  }, [repository, profile?.id, selectedId, selected?.status]);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'nearest' });
   }, [messages.length]);
 
-  const act = async (action: (isCurrent: () => boolean) => Promise<void>) => {
+  const act = async (action: (isCurrent: () => boolean) => Promise<void>, refreshList = false) => {
+    if (mutationLock.current) return;
+    mutationLock.current = true;
     const generation = actionGeneration.current;
     setBusy(true);
     setActionError('');
     try {
       await action(() => generation === actionGeneration.current);
-      setRefresh((value) => value + 1);
+      if (refreshList) listPoll.current?.refresh();
       onChanged?.();
     } catch (cause) {
       if (generation === actionGeneration.current) setActionError(errorMessage(cause));
     } finally {
+      mutationLock.current = false;
       setBusy(false);
     }
   };
@@ -152,8 +208,17 @@ export default function Inbox({
     const threadId = selected.id;
     const generation = actionGeneration.current;
     void act(async () => {
-      await repository.sendMessage(threadId, text);
-      if (activeThread.current === threadId && actionGeneration.current === generation) setBody('');
+      const sent = await repository.sendMessage(threadId, text);
+      if (activeThread.current === threadId && actionGeneration.current === generation) {
+        setBody('');
+        setMessages((current) => mergeMessages(current, [sent]));
+        setConversations((current) =>
+          current.map((item) =>
+            item.id === threadId ? { ...item, last_message: sent.body } : item,
+          ),
+        );
+        messagePoll.current?.refresh();
+      }
     });
   };
   if (!profile)
@@ -186,9 +251,9 @@ export default function Inbox({
       <div className={`inbox-layout${selectedId ? ' inbox-has-selection' : ''}`}>
         <aside className="inbox-list" aria-label="Conversations">
           <div className="inbox-list-heading">
-            Messages <span>{conversations.length}</span>
+            Messages <span>{visibleConversations.length}</span>
           </div>
-          {loading && !conversations.length && (
+          {loading && !visibleConversations.length && (
             <p className="inbox-padding" role="status">
               Loading conversations…
             </p>
@@ -196,15 +261,12 @@ export default function Inbox({
           {error && (
             <div className="inbox-padding error-message" role="alert">
               {error}
-              <button
-                className="panel-text-button"
-                onClick={() => setRefresh((value) => value + 1)}
-              >
+              <button className="panel-text-button" onClick={() => listPoll.current?.refresh()}>
                 Retry
               </button>
             </div>
           )}
-          {!loading && !error && !conversations.length && (
+          {!loading && !error && !visibleConversations.length && (
             <div className="inbox-empty">
               <MessageCircle size={28} />
               <h3>Room for a new connection</h3>
@@ -214,7 +276,7 @@ export default function Inbox({
               </p>
             </div>
           )}
-          {conversations.map((conversation) => (
+          {visibleConversations.map((conversation) => (
             <button
               key={conversation.id}
               className={`inbox-person${selectedId === conversation.id ? ' selected' : ''}`}
@@ -307,13 +369,17 @@ export default function Inbox({
                         void act(async (isCurrent) => {
                           await repository.blockUser(selected.other.id);
                           if (isCurrent() && activeThread.current === selected.id) {
+                            setConversations((current) =>
+                              current.filter((item) => item.other.id !== selected.other.id),
+                            );
+                            setMessages([]);
                             setSelectedId('');
                             setBlocking(false);
                           }
                           onNotice(
                             'Member blocked. You can manage blocked members in your profile.',
                           );
-                        })
+                        }, true)
                       }
                     >
                       Block member
@@ -346,7 +412,7 @@ export default function Inbox({
                           void act(async () => {
                             await repository.respondConversation(selected.id, true);
                             onNotice('Connection accepted.');
-                          })
+                          }, true)
                         }
                       >
                         Accept request
@@ -358,7 +424,7 @@ export default function Inbox({
                           void act(async () => {
                             await repository.respondConversation(selected.id, false);
                             onNotice('Request declined.');
-                          })
+                          }, true)
                         }
                       >
                         Decline
@@ -381,24 +447,26 @@ export default function Inbox({
                     className="dm-messages"
                     aria-label={`Messages with ${selected.other.nickname}`}
                   >
-                    {messageLoading && !messages.length && <p role="status">Loading messages…</p>}
+                    {messageLoading && !visibleMessages.length && (
+                      <p role="status">Loading messages…</p>
+                    )}
                     {messageError && (
                       <p className="error-message" role="alert">
                         {messageError}{' '}
                         <button
                           className="panel-text-button"
-                          onClick={() => setRefresh((value) => value + 1)}
+                          onClick={() => messagePoll.current?.refresh()}
                         >
                           Retry
                         </button>
                       </p>
                     )}
-                    {!messageLoading && !messageError && !messages.length && (
+                    {!messageLoading && !messageError && !visibleMessages.length && (
                       <p className="dm-first-message">
                         A simple “how are you today?” is a lovely place to start.
                       </p>
                     )}
-                    {messages.map((message) => (
+                    {visibleMessages.map((message) => (
                       <div
                         className={`dm-message-row${message.sender_id === profile.id ? ' own' : ''}`}
                         key={message.id}
@@ -507,7 +575,7 @@ export default function Inbox({
                       <span>Send</span>
                     </button>
                     <span className="dm-compose-help">
-                      {body.length}/2000 · Messages update about every 8 seconds
+                      {body.length}/2000 · Messages refresh automatically while you’re here
                     </span>
                   </form>
                 </>

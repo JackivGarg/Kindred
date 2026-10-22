@@ -18,4 +18,5 @@ jobs:
       - run: npm run format:check
       - run: npm test
       - run: npm run build
+      - run: npm run check:bundle
       - run: npm audit --audit-level=high

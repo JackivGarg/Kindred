@@ -14,8 +14,9 @@ Run the complete contents of `supabase/schema.sql` **once** in that new project'
 
 Then run `supabase/moderation-evidence.sql`. It installs report evidence capture,
 moderator hiding for reported messages, and the conversation return policy fix.
-See `supabase/README.md` for the full installation and upgrade order. Both changes
-are already installed in the dedicated Kindred project.
+Finally run `supabase/performance.sql` for the matching query indexes and moderation
+policy optimization. See `supabase/README.md` for the installation and upgrade
+order. All of these changes are already installed in the dedicated Kindred project.
 
 Copy `.env.example` to `.env.local` and set both values:
 

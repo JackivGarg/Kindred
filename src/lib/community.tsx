@@ -50,6 +50,14 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
   const generation = useRef(0);
   const sessionIdentity = useRef<string | null>(null);
   const authRevision = useRef(0);
+  const profileRequest = useRef<{
+    repository: typeof repository;
+    uid: string | null;
+    promise: Promise<Profile | null>;
+  } | null>(null);
+  const profileSnapshot = useRef(profile);
+  profileSnapshot.current = profile;
+  const userId = session?.user.id ?? null;
   const applySession = useCallback((value: Session | null) => {
     const identity = value?.user.id ?? null;
     if (sessionIdentity.current !== identity) {
@@ -93,15 +101,23 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
   }, [applySession]);
   const loadProfile = useCallback(async () => {
     const ticket = ++generation.current;
-    setLoading(true);
+    if (!profileSnapshot.current || (mode === 'live' && profileSnapshot.current.id !== userId))
+      setLoading(true);
     setError('');
     try {
       if (mode === 'live' && !authReady) return;
-      if (mode === 'live' && !session) {
+      if (mode === 'live' && !userId) {
         setProfile(null);
         return;
       }
-      const next = await repository.getProfile();
+      let pending = profileRequest.current;
+      if (!pending || pending.repository !== repository || pending.uid !== userId) {
+        pending = { repository, uid: userId, promise: repository.getProfile() };
+        profileRequest.current = pending;
+      }
+      const next = await pending.promise.finally(() => {
+        if (profileRequest.current === pending) profileRequest.current = null;
+      });
       if (ticket === generation.current) {
         setProfile(next);
         if (!next && mode === 'live')
@@ -117,7 +133,7 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
     } finally {
       if (ticket === generation.current) setLoading(false);
     }
-  }, [repository, mode, session, authReady]);
+  }, [repository, mode, userId, authReady]);
   useEffect(() => {
     void loadProfile();
     return () => {

@@ -24,6 +24,7 @@
   width: min(100%, 760px);
 }
 .modal-header {
+  background: #f2f4e9;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -72,8 +73,8 @@
   cursor: pointer;
 }
 .panel-note {
-  background: #edf1e8;
-  color: #3e5847;
+  background: #e7efdf;
+  color: #3d5e40;
   padding: 14px 16px;
   border-radius: 13px;
   font-size: 13px;
@@ -209,11 +210,20 @@
   margin: 18px auto 0;
 }
 .avatar {
+  --avatar-size: 43px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  flex-shrink: 0;
+  flex: 0 0 var(--avatar-size);
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  min-width: var(--avatar-size);
+  max-width: var(--avatar-size);
+  min-height: var(--avatar-size);
+  max-height: var(--avatar-size);
+  aspect-ratio: 1;
+  overflow: hidden;
   font-weight: 600;
   font-size: 14px;
   letter-spacing: -0.5px;
@@ -221,34 +231,31 @@
   color: #456345;
 }
 .avatar-sm {
-  width: 30px;
-  height: 30px;
+  --avatar-size: 30px;
   font-size: 11px;
 }
 .avatar-md {
-  width: 43px;
-  height: 43px;
+  --avatar-size: 43px;
 }
 .avatar-lg {
-  width: 62px;
-  height: 62px;
+  --avatar-size: 62px;
   font-size: 22px;
 }
 .avatar-tone-0 {
-  background: #e5e8d6;
-  color: #59653c;
+  background: #dfe9cd;
+  color: #506434;
 }
 .avatar-tone-1 {
-  background: #f0e0d2;
-  color: #865a45;
+  background: #f4ddcd;
+  color: #87513a;
 }
 .avatar-tone-2 {
-  background: #e6e1ed;
-  color: #6e5a85;
+  background: #e8ddf0;
+  color: #71518c;
 }
 .avatar-tone-3 {
-  background: #dce9e1;
-  color: #476b58;
+  background: #d8eadf;
+  color: #38684e;
 }
 .inbox-heading {
   display: flex;
@@ -322,8 +329,8 @@
   background: #f0f3e9;
 }
 .inbox-person.selected {
-  background: #e9eee2;
-  box-shadow: inset 3px 0 #668265;
+  background: #e1ecda;
+  box-shadow: inset 3px 0 #5c885e;
 }
 .inbox-person-text {
   min-width: 0;
@@ -460,7 +467,7 @@
   color: #344c3b;
 }
 .dm-message-row.own .dm-message {
-  background: #47664b;
+  background: #315f49;
   color: #fffdf7;
   border-radius: 16px 16px 3px 16px;
 }
@@ -539,8 +546,8 @@
 .dm-report-form,
 .dm-boundary {
   padding: 18px 22px;
-  background: #f5eee5;
-  border-bottom: 1px solid #e8ddd0;
+  background: #f7e9dd;
+  border-bottom: 1px solid #ead7c6;
 }
 .dm-report-form > .panel-help {
   margin: 10px 0;
@@ -706,8 +713,7 @@
     gap: 8px;
   }
   .dm-header .avatar {
-    width: 35px;
-    height: 35px;
+    --avatar-size: 35px;
     font-size: 12px;
   }
 }

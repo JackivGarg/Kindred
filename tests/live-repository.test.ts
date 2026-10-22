@@ -9,6 +9,7 @@ function mockClient(results: { data: unknown; error: unknown }[], uid: string | 
   for (const name of [
     'select',
     'eq',
+    'gte',
     'or',
     'order',
     'range',
@@ -30,6 +31,10 @@ function mockClient(results: { data: unknown; error: unknown }[], uid: string | 
   const client = {
     auth: {
       getUser: vi.fn(async () => ({ data: { user: uid ? { id: uid } : null }, error: null })),
+      getSession: vi.fn(async () => ({
+        data: { session: uid ? { user: { id: uid } } : null },
+        error: null,
+      })),
     },
     from: vi.fn(() => chain),
     rpc: vi.fn(),
@@ -37,7 +42,7 @@ function mockClient(results: { data: unknown; error: unknown }[], uid: string | 
   return { repo: new SupabaseRepository(client as unknown as SupabaseClient), client, chain };
 }
 describe('live repository boundaries', () => {
-  it('requires a verified signed-in identity before querying community content', async () => {
+  it('requires a current session hint before querying community content', async () => {
     const { repo, client } = mockClient([], null);
     await expect(repo.listPosts()).rejects.toThrow('sign in');
     expect(client.from).not.toHaveBeenCalled();
@@ -64,10 +69,12 @@ describe('live repository boundaries', () => {
     expect(client.from).not.toHaveBeenCalledWith('messages');
     expect(chain.insert).not.toHaveBeenCalled();
   });
-  it('denies messages when a conversation is inaccessible (third party or blocked)', async () => {
-    const { repo, client } = mockClient([{ data: null, error: null }]);
-    await expect(repo.listMessages(item)).rejects.toThrow('must accept');
-    expect(client.from).not.toHaveBeenCalledWith('messages');
+  it('lets RLS return no messages for inaccessible conversations without a second request', async () => {
+    const { repo, client } = mockClient([{ data: [], error: null }]);
+    expect(await repo.listMessages(item)).toEqual([]);
+    expect(client.from).toHaveBeenCalledTimes(1);
+    expect(client.from).toHaveBeenCalledWith('messages');
+    expect(client.auth.getUser).not.toHaveBeenCalled();
   });
   it('surfaces database permission rejection after acceptance, including a new block', async () => {
     const { repo } = mockClient([
@@ -130,13 +137,45 @@ describe('live repository boundaries', () => {
   it('bounds message history and presents the latest batch in chronological order', async () => {
     const newest = { id: 'newest', body: 'New message' };
     const oldest = { id: 'oldest', body: 'Old message' };
-    const { repo, chain } = mockClient([
-      { data: { id: item, status: 'accepted' }, error: null },
-      { data: [newest, oldest], error: null },
-    ]);
+    const { repo, chain } = mockClient([{ data: [newest, oldest], error: null }]);
     expect(await repo.listMessages(item)).toEqual([oldest, newest]);
     expect(chain.limit).toHaveBeenCalledWith(200);
     expect(chain.order).toHaveBeenCalledWith('created_at', { ascending: false });
+  });
+  it('fetches only a chronological cursor batch while preserving timestamp precision', async () => {
+    const cursor = { id: item, created_at: '2026-10-22T12:30:00.123456+00:00' };
+    const next = { id: user, body: 'Next message' };
+    const { repo, chain, client } = mockClient([{ data: [next], error: null }]);
+    expect(await repo.listMessages(item, cursor)).toEqual([next]);
+    expect(chain.or).toHaveBeenCalledWith(
+      `created_at.gt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.gt.${item})`,
+    );
+    expect(chain.gte).toHaveBeenCalledWith('created_at', cursor.created_at);
+    expect(chain.order).toHaveBeenCalledWith('created_at', { ascending: true });
+    expect(chain.order).toHaveBeenCalledWith('id', { ascending: true });
+    expect(chain.limit).toHaveBeenCalledWith(200);
+    expect(client.auth.getSession).toHaveBeenCalledTimes(1);
+    expect(client.auth.getUser).not.toHaveBeenCalled();
+  });
+  it('rejects malformed cursor filters before requesting messages', async () => {
+    const { repo, client } = mockClient([]);
+    await expect(
+      repo.listMessages(item, { id: item, created_at: 'now,or(id.neq.null)' }),
+    ).rejects.toThrow('cursor is invalid');
+    expect(client.from).not.toHaveBeenCalled();
+  });
+  it('reads SDK session state again for each operation and still verifies profile startup remotely', async () => {
+    const { repo, client } = mockClient([
+      { data: [], error: null },
+      { data: [], error: null },
+      { data: null, error: null },
+    ]);
+    await repo.listPosts();
+    await repo.listPosts();
+    expect(client.auth.getSession).toHaveBeenCalledTimes(2);
+    expect(client.auth.getUser).not.toHaveBeenCalled();
+    await repo.getProfile();
+    expect(client.auth.getUser).toHaveBeenCalledTimes(1);
   });
   it('rejects invalid feed offsets before accessing the posts table', async () => {
     const { repo, client } = mockClient([]);

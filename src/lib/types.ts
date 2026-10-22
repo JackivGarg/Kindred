@@ -64,6 +64,10 @@ export interface Message {
   body: string;
   created_at: string;
 }
+export interface MessageCursor {
+  created_at: string;
+  id: string;
+}
 export interface Report {
   id: string;
   reporter_id: string;
@@ -109,7 +113,7 @@ export interface CommunityRepository {
   listConversations(): Promise<Conversation[]>;
   requestConversation(recipientId: string): Promise<Conversation>;
   respondConversation(id: string, accept: boolean): Promise<void>;
-  listMessages(conversationId: string): Promise<Message[]>;
+  listMessages(conversationId: string, after?: MessageCursor): Promise<Message[]>;
   sendMessage(conversationId: string, body: string): Promise<Message>;
   blockUser(userId: string): Promise<void>;
   unblockUser(userId: string): Promise<void>;

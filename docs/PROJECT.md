@@ -9,6 +9,7 @@ Dashboard: https://supabase.com/dashboard/project/uhaklwcvscsdsrfgniee
 The `initial_community_schema` migration was installed on 22 October 2026.
 The `automatic_signup_profiles` and
 `reported_content_evidence_and_conversation_returning` migrations are also applied.
+The `indexed_feed_and_message_loading` migration installs the measured query indexes.
 All eight public tables have row-level security enabled. Private moderator roles
 and rate counters intentionally have no client-access policies.
 

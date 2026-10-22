@@ -32,11 +32,13 @@ function PostCard({
   onChanged,
   onMessage,
   onNotice,
+  excludedAuthors,
 }: {
   post: Post;
-  onChanged: () => void;
+  onChanged: (change: FeedChange) => void;
   onMessage: (id: string) => void;
   onNotice: (message: string) => void;
+  excludedAuthors: ReadonlySet<string>;
 }) {
   const { repository, profile, mode } = useCommunity();
   const [menu, setMenu] = useState(false);
@@ -52,6 +54,7 @@ function PostCard({
   const mounted = useRef(true);
   const mutationLock = useRef(false);
   const commentRequest = useRef(0);
+  const commentsLoaded = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -77,7 +80,10 @@ function PostCard({
     setLoading(true);
     try {
       const next = await repository.listComments(post.id);
-      if (mounted.current && ticket === commentRequest.current) setComments(next);
+      if (mounted.current && ticket === commentRequest.current) {
+        setComments(next);
+        commentsLoaded.current = true;
+      }
     } catch (error) {
       if (mounted.current && ticket === commentRequest.current) onNotice(errorMessage(error));
     } finally {
@@ -86,7 +92,7 @@ function PostCard({
   }
   async function toggleComments() {
     setExpanded(!expanded);
-    if (!expanded) await loadComments();
+    if (!expanded && !commentsLoaded.current) await loadComments();
   }
   return (
     <article className="post-card card">
@@ -167,7 +173,8 @@ function PostCard({
           onClick={() =>
             void run(async () => {
               await repository.toggleSupport(post.id, !post.supported);
-              onChanged();
+              if (mounted.current)
+                onChanged({ type: 'support', id: post.id, supported: !post.supported });
             })
           }
         >
@@ -199,35 +206,48 @@ function PostCard({
       </div>
       {expanded && (
         <div className="replies">
-          {loading ? (
+          <button
+            className="panel-text-button"
+            disabled={loading || busy}
+            onClick={() => void loadComments()}
+          >
+            Refresh replies
+          </button>
+          {loading && !comments.length ? (
             <p className="muted">Listening in…</p>
           ) : comments.length ? (
-            comments.map((comment) => (
-              <div className="reply" key={comment.id}>
-                <Avatar profile={comment.author} size="sm" />
-                <div>
-                  <strong>{comment.author.nickname}</strong>
-                  <span className="reply-time">{age(comment.created_at)}</span>
-                  <p>{comment.body}</p>
+            comments
+              .filter((comment) => !excludedAuthors.has(comment.author_id))
+              .map((comment) => (
+                <div className="reply" key={comment.id}>
+                  <Avatar profile={comment.author} size="sm" />
+                  <div>
+                    <strong>{comment.author.nickname}</strong>
+                    <span className="reply-time">{age(comment.created_at)}</span>
+                    <p>{comment.body}</p>
+                  </div>
+                  {comment.author_id === profile?.id && (
+                    <button
+                      className="icon-button"
+                      aria-label="Delete your reply"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await repository.deleteComment(comment.id);
+                          if (mounted.current) {
+                            setComments((current) =>
+                              current.filter((item) => item.id !== comment.id),
+                            );
+                            onChanged({ type: 'comment', id: post.id, delta: -1 });
+                          }
+                        })
+                      }
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </div>
-                {comment.author_id === profile?.id && (
-                  <button
-                    className="icon-button"
-                    aria-label="Delete your reply"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        await repository.deleteComment(comment.id);
-                        await loadComments();
-                        onChanged();
-                      })
-                    }
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                )}
-              </div>
-            ))
+              ))
           ) : (
             <p className="muted">A kind word can make a difference. Be the first to reply.</p>
           )}
@@ -236,10 +256,12 @@ function PostCard({
             onSubmit={(event) => {
               event.preventDefault();
               void run(async () => {
-                await repository.addComment(post.id, reply);
-                setReply('');
-                await loadComments();
-                onChanged();
+                const next = await repository.addComment(post.id, reply);
+                if (mounted.current) {
+                  setReply('');
+                  setComments((current) => [...current, next]);
+                  onChanged({ type: 'comment', id: post.id, delta: 1 });
+                }
               });
             }}
           >
@@ -248,11 +270,12 @@ function PostCard({
               maxLength={1500}
               placeholder="Offer a little kindness…"
               value={reply}
+              disabled={busy || loading}
               onChange={(event) => setReply(event.target.value)}
             />
             <button
               className="icon-button"
-              disabled={!reply.trim() || busy}
+              disabled={!reply.trim() || busy || loading}
               aria-label="Send reply"
             >
               <Send size={17} />
@@ -333,7 +356,11 @@ function PostCard({
                   if (confirm === 'delete') await repository.deletePost(post.id);
                   else await repository.blockUser(post.author_id);
                   setConfirm(null);
-                  onChanged();
+                  onChanged(
+                    confirm === 'delete'
+                      ? { type: 'delete', id: post.id }
+                      : { type: 'block', authorId: post.author_id },
+                  );
                   onNotice(confirm === 'delete' ? 'Your post was deleted.' : 'Member blocked.');
                 })
               }
@@ -346,6 +373,12 @@ function PostCard({
     </article>
   );
 }
+
+type FeedChange =
+  | { type: 'support'; id: string; supported: boolean }
+  | { type: 'comment'; id: string; delta: number }
+  | { type: 'delete'; id: string }
+  | { type: 'block'; authorId: string };
 
 export default function Feed({
   myPosts = false,
@@ -367,16 +400,51 @@ export default function Feed({
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [excludedAuthors, setExcludedAuthors] = useState<Set<string>>(() => new Set());
+  const redacted = useRef({ authors: new Set<string>(), posts: new Set<string>() });
   const request = useRef(0);
-  const previousQuery = useRef<{ repository: typeof repository; key: string } | null>(null);
+  const moreLock = useRef(false);
+  const owner = useRef<{ repository: typeof repository; uid: string | undefined } | null>(null);
+  const ownData = owner.current?.repository === repository && owner.current?.uid === profile?.id;
+  const visiblePosts = ownData ? posts : [];
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const applyChange = useCallback((change: FeedChange) => {
+    if (change.type === 'block') {
+      redacted.current.authors.add(change.authorId);
+      setExcludedAuthors(new Set(redacted.current.authors));
+    }
+    if (change.type === 'delete') redacted.current.posts.add(change.id);
+    setPosts((current) => {
+      if (change.type === 'delete') return current.filter((post) => post.id !== change.id);
+      if (change.type === 'block')
+        return current.filter((post) => post.author_id !== change.authorId);
+      return current.map((post) =>
+        post.id !== change.id
+          ? post
+          : change.type === 'support'
+            ? {
+                ...post,
+                supported: change.supported,
+                support_count: Math.max(0, post.support_count + (change.supported ? 1 : -1)),
+              }
+            : { ...post, comment_count: Math.max(0, post.comment_count + change.delta) },
+      );
+    });
+  }, []);
   useEffect(() => {
     let active = true;
     request.current++;
-    const key = JSON.stringify([profile?.id, profile?.region, myPosts, tab, topic, search]);
-    if (previousQuery.current?.repository !== repository || previousQuery.current?.key !== key)
+    const changedOwner =
+      owner.current?.repository !== repository || owner.current?.uid !== profile?.id;
+    if (changedOwner) {
+      setPosts([]);
+      setHasMore(false);
       setLoading(true);
-    previousQuery.current = { repository, key };
+      redacted.current = { authors: new Set(), posts: new Set() };
+      setExcludedAuthors(new Set());
+    }
+    setRefreshing(true);
     setError('');
     repository
       .listPosts({
@@ -388,7 +456,14 @@ export default function Feed({
       })
       .then((rows) => {
         if (active) {
-          setPosts(rows);
+          owner.current = { repository, uid: profile?.id };
+          setPosts(
+            rows.filter(
+              (post) =>
+                !redacted.current.authors.has(post.author_id) &&
+                !redacted.current.posts.has(post.id),
+            ),
+          );
           setHasMore(rows.length === 20);
         }
       })
@@ -396,13 +471,18 @@ export default function Feed({
         if (active) setError(errorMessage(err));
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
     return () => {
       active = false;
     };
   }, [repository, profile?.id, profile?.region, myPosts, tab, topic, search, revision]);
   async function more() {
+    if (moreLock.current || refreshing) return;
+    moreLock.current = true;
     const generation = request.current;
     setMoreBusy(true);
     try {
@@ -417,19 +497,38 @@ export default function Feed({
       if (generation === request.current) {
         setPosts((current) => [
           ...current,
-          ...rows.filter((row) => !current.some((post) => post.id === row.id)),
+          ...rows.filter(
+            (row) =>
+              !current.some((post) => post.id === row.id) &&
+              !redacted.current.authors.has(row.author_id) &&
+              !redacted.current.posts.has(row.id),
+          ),
         ]);
         setHasMore(rows.length === 20);
       }
     } catch (err) {
       onNotice(errorMessage(err));
     } finally {
+      moreLock.current = false;
       setMoreBusy(false);
     }
   }
   return (
     <>
       <PostComposer onCreated={refresh} onNotice={onNotice} />
+      {refreshing && visiblePosts.length > 0 && (
+        <p className="muted" role="status">
+          Updating stories…
+        </p>
+      )}
+      {error && visiblePosts.length > 0 && (
+        <p className="error-message" role="alert">
+          {error}{' '}
+          <button className="button ghost" onClick={refresh}>
+            Retry
+          </button>
+        </p>
+      )}
       <div className="feed-toolbar">
         <div className="feed-tabs" aria-label="Feed audience">
           {myPosts ? (
@@ -469,7 +568,7 @@ export default function Feed({
           Stories mentioning “{search}”
         </p>
       )}
-      {loading ? (
+      {loading && !visiblePosts.length ? (
         <div className="feed-loading" role="status">
           {[1, 2].map((item) => (
             <div className="skeleton card" key={item}>
@@ -480,26 +579,31 @@ export default function Feed({
           ))}
           <span className="sr-only">Loading stories</span>
         </div>
-      ) : error ? (
+      ) : error && !visiblePosts.length ? (
         <div className="empty-state card">
           <p className="error-message">{error}</p>
           <button className="button ghost" onClick={refresh}>
             Try again
           </button>
         </div>
-      ) : posts.length ? (
-        <div className="post-list">
-          {posts.map((post) => (
+      ) : visiblePosts.length ? (
+        <div className="post-list" aria-busy={refreshing}>
+          {visiblePosts.map((post) => (
             <PostCard
               key={post.id}
               post={post}
-              onChanged={refresh}
+              onChanged={applyChange}
               onMessage={onMessage}
               onNotice={onNotice}
+              excludedAuthors={excludedAuthors}
             />
           ))}
           {hasMore && (
-            <button className="button load-more" disabled={moreBusy} onClick={() => void more()}>
+            <button
+              className="button load-more"
+              disabled={moreBusy || refreshing}
+              onClick={() => void more()}
+            >
               {moreBusy ? 'Loading…' : 'Read more stories'}
             </button>
           )}

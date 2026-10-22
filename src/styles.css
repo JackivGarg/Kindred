@@ -107,6 +107,8 @@ svg {
   min-height: 100vh;
 }
 .sidebar {
+  overflow-y: auto;
+  scrollbar-width: thin;
   width: 224px;
   position: fixed;
   inset: 0 auto 0 0;
@@ -208,10 +210,11 @@ svg {
   padding: 12px 9px;
   background: #fafaf5;
 }
-.profile-button > span {
+.profile-button > span:not(.avatar) {
   flex: 1;
   min-width: 0;
 }
+
 .profile-button strong {
   font-size: 11px;
   display: block;
@@ -1852,5 +1855,169 @@ svg {
   }
   .sidebar.is-open {
     visibility: visible;
+  }
+}
+
+/* Gentle color and clear interaction states, keeping reading surfaces quiet. */
+:root {
+  --forest: #285c46;
+}
+.hero-card {
+  background: linear-gradient(115deg, #e3eedc 0%, #edf3e3 68%, #f5eadb 100%);
+  border-color: #d1dfc6;
+}
+.hero-card h2 {
+  color: #355d3e;
+}
+.hero-label {
+  color: #50724c;
+}
+.hero-card .botanical {
+  opacity: 0.8;
+}
+.nav-item.active {
+  background: #e2edde;
+  box-shadow: inset 3px 0 #5d8b62;
+}
+.nav-item:hover:not(.active) {
+  background: #f3eee5;
+  color: #5b7055;
+}
+.button.primary {
+  box-shadow: 0 2px 5px #285c4614;
+}
+.button.primary:hover:not(:disabled) {
+  background: #214f3c;
+  box-shadow: 0 3px 8px #285c4621;
+}
+.button.ghost:hover:not(:disabled) {
+  background: #e2eada;
+  color: #3c5d3d;
+}
+.button.danger:hover:not(:disabled) {
+  background: #f0d6ca;
+  color: #883f31;
+}
+.profile-button {
+  background: #f0f4e9;
+  border-color: #dfe7d5;
+}
+.profile-button:hover {
+  background: #e7efdf;
+  border-color: #c9d9bb;
+}
+.post-card {
+  border-color: #e0e5d7;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.post-card:hover {
+  border-color: #c9d7bd;
+  box-shadow: 0 4px 16px #35543a08;
+}
+.topic-chips button.selected {
+  background: #deebd5;
+  border-color: #bfd2ac;
+  color: #3e6031;
+}
+.topic-chips button:hover:not(.selected) {
+  background: #f4e5d9;
+  border-color: #e4cdbb;
+  color: #805a42;
+}
+.post-actions .support-button.is-supported {
+  color: #a35d46;
+}
+.post-actions > button:hover:not(:disabled) {
+  color: #376342;
+}
+.post-actions .support-button.is-supported:hover:not(:disabled) {
+  color: #8c4936;
+}
+.mood-hopeful {
+  background: #e4edce;
+  color: #607733;
+}
+.mood-okay {
+  background: #deecdd;
+  color: #4f7550;
+}
+.mood-anxious {
+  background: #f6e7c9;
+  color: #89652b;
+}
+.mood-low {
+  background: #e9dff1;
+  color: #7c5a94;
+}
+.mood-overwhelmed {
+  background: #f5ddd0;
+  color: #995c41;
+}
+.reminder-card {
+  background: linear-gradient(145deg, #eee5f3, #f3edf4);
+  border-color: #e0d3e7;
+}
+.reminder-card p {
+  color: #7b628c;
+}
+.quote-mark {
+  color: #b69cc5;
+}
+.breathing-card {
+  background: #f6ebde;
+  border-color: #ebdcc7;
+}
+.breath-icon {
+  background: #efdbc4;
+  color: #9b714c;
+}
+.breathing-card h3 {
+  color: #8b6747;
+}
+.breathing-card p {
+  color: #8b775d;
+}
+.breathing-card > span {
+  color: #8e7d65;
+}
+.support-link:hover {
+  color: #946044;
+}
+.support-link:hover small {
+  color: #956e52;
+}
+.feed-tabs button:hover:not(.active) {
+  color: #426a43;
+}
+.search-box:focus-within,
+.reply-form:focus-within {
+  border-color: #91ab7e;
+  box-shadow: 0 0 0 2px #86a5752b;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #5e825d;
+  outline-offset: 3px;
+}
+
+@media (max-width: 1200px) {
+  .hero-card .botanical {
+    opacity: 0.45;
+  }
+}
+@media (max-width: 700px) {
+  .hero-card .botanical {
+    opacity: 0.3;
+  }
+}
+
+@media (min-width: 701px) and (max-height: 800px) {
+  .sidebar-note {
+    display: none;
   }
 }

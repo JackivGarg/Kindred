@@ -5,6 +5,7 @@ import type {
   CreatePostInput,
   FeedFilter,
   Message,
+  MessageCursor,
   Post,
   Profile,
   ReportInput,
@@ -299,12 +300,19 @@ export class DemoRepository implements CommunityRepository {
     c.status = accept ? 'accepted' : 'declined';
     this.persist();
   }
-  async listMessages(conversationId: string) {
+  async listMessages(conversationId: string, after?: MessageCursor) {
     const c = this.conversation(conversationId);
     if (c.status !== 'accepted') return [];
     return this.state.messages
-      .filter((m) => m.conversation_id === conversationId)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .filter(
+        (m) =>
+          m.conversation_id === conversationId &&
+          (!after ||
+            m.created_at > after.created_at ||
+            (m.created_at === after.created_at && m.id > after.id)),
+      )
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+      .slice(after ? 0 : -200, after ? 200 : undefined)
       .map((m) => ({ ...m }));
   }
   async sendMessage(conversationId: string, body: string): Promise<Message> {

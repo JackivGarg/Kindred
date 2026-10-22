@@ -2,9 +2,9 @@
 
 ## Automated checks
 
-- 71 tests passed across 10 files (Vitest).
+- 87 tests passed across 14 files (Vitest).
 - The SQL permission suite runs the actual tables, policies, grants and triggers
-  in PostgreSQL via PGlite, including both database upgrades.
+  in PostgreSQL via PGlite, including the database upgrades and query optimization.
 - The same permission suite passed against the dedicated Supabase project in a
   transaction that rolled back all test fixtures.
 - Read-only live smoke checks passed: auth endpoint reachable, email
@@ -12,6 +12,10 @@
   replies, conversations, messages and reports.
 - TypeScript and the optimized production build passed.
 - Dependency audit: zero reported vulnerabilities at verification time.
+- Measured query-plan checks cover 300 synthetic profiles and 12,000 rows per
+  tested table. Local timings do not establish hosted capacity; see `PERFORMANCE.md`.
+- Request-count regressions verify local feed updates, bounded incremental inbox
+  reads, offline/hidden polling suspension and account-isolated state.
 
 ## Browser checks
 
