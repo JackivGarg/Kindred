@@ -1,56 +1,90 @@
 # Kindred
 
+**A little less alone.** A mental health peer-support community where adults can share what they’re going through, listen to others, and build connections at their own pace.
+
 [![Project checks](https://github.com/JackivGarg/Kindred/actions/workflows/checks.yml/badge.svg)](https://github.com/JackivGarg/Kindred/actions/workflows/checks.yml)
 
-A mental health peer-support community built with React, TypeScript, Vite and Supabase. People can share a check-in, reply with support, explore global or regional posts, and request a private conversation. Direct messages require the recipient to accept first. Members can report content and block other members.
+![Kindred community demo](docs/screenshots/desktop.jpg)
+
+## Features
+
+- **Share an update** with a topic, mood, and global or regional audience.
+- **Listen and respond** through replies and support reactions.
+- **Connect privately** through message requests the recipient accepts first.
+- **Use a nickname** instead of a real name; email stays private from members.
+- **Set boundaries** by blocking members or reporting posts and messages.
+- **Manage your account** with email confirmation and password recovery.
+
+## Tech stack
+
+| Layer                     | Technology                                   |
+| ------------------------- | -------------------------------------------- |
+| Frontend                  | React, TypeScript, Vite, Lucide icons        |
+| Authentication & database | Supabase Auth and PostgreSQL                 |
+| Access control            | Database row-level security and write limits |
+| Testing                   | Vitest, React Testing Library, PGlite        |
+| Deployment                | Azure Static Web Apps                        |
 
 ## Run locally
 
-Requires a current Node.js release supported by the installed Vite version and npm.
+Requires **Node.js 22.12+ (22.x) or 24+** and npm.
 
 ```sh
-npm install
+git clone https://github.com/JackivGarg/Kindred.git
+cd Kindred
+npm ci
 npm run dev
 ```
 
-Leave both Supabase environment variables empty to explore the fictional demo. Demo changes stay in the browser's session storage; sample people are fictional and messages do not reach real people. Clearing the browser session discards the demo state. Do not enter sensitive personal information into a shared browser.
+Open [localhost:3000](http://localhost:3000). Without Supabase settings, the app runs a **fictional demo**—no account needed. Sample people are fictional, messages reach no real people, and changes stay in browser session storage. Avoid entering sensitive information in the demo.
 
-```sh
-npm test
-npm run build
-npm run check:bundle
-npm run preview
+### Connect a live backend
+
+Copy `.env.example` to `.env.local` and set your dedicated Supabase project's public values:
+
+```dotenv
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_PUBLIC_KEY
 ```
 
-The configured local project runs at [localhost:3000](http://localhost:3000).
-Use [the fictional demo](http://localhost:3000/?demo=1) to explore without an
-account. `npm run test:live` runs read-only authentication and signed-out access
-checks against the configured Supabase project; it never creates user content.
+Follow the [setup guide](docs/SETUP.md) for the schema, authentication, and moderator setup. Use a **separate database project**, never an unrelated existing database. Restart the development server after changing environment values.
 
-For a real community, follow [the setup guide](docs/SETUP.md) and connect a **new, separate Supabase project**. Existing projects must not receive this schema.
+Only public settings belong in `VITE_` variables. Keep database passwords, service-role keys, and SMTP credentials out of the frontend and repository.
 
-## Product boundaries
+## Useful commands
 
-This is an adults-only pilot intended for peer support. It is not a clinical service, and reports are not an emergency response channel. A person must operate the moderation queue before inviting a community.
+| Command                | Purpose                                              |
+| ---------------------- | ---------------------------------------------------- |
+| `npm test`             | Run component, repository, and database-policy tests |
+| `npm run build`        | Check TypeScript and build the production app        |
+| `npm run preview`      | Preview the production build locally                 |
+| `npm run format:check` | Check code formatting                                |
+| `npm run check:bundle` | Check the JavaScript size budget after building      |
+| `npm run test:live`    | Run read-only checks against the configured backend  |
 
-Regional settings control discovery, not confidentiality: signed-in community members can access regional posts. Use a nickname and avoid sharing precise locations or identifying details. Direct messages are access-controlled in the database but are **not end-to-end encrypted**. Operators with privileged database access can access stored data.
+## Deployment
 
-Database row-level policies enforce ownership, conversation participation, message-request acceptance and blocking. The test suite includes repository behavior checks and database policy tests. A local test run is not a substitute for verifying the final Supabase configuration and redirects before release.
+Follow the [Azure deployment guide](docs/DEPLOY.md) to prepare a dedicated Free Static Web App, configure the final app URL, and deploy. A manual GitHub Actions deployment workflow is also included.
 
-Frontend regression tests exercise real React components in jsdom, including
-StrictMode support actions, posting boundaries, duplicate-submit protection,
-recipient consent before messaging, and dialog Escape/focus restoration.
+Before opening registration, configure [signup and recovery email](docs/EMAIL-SETUP.md), verify real email links on the deployed domain, and review the [launch checklist](docs/LAUNCH.md). Running locally does not create Azure resources.
 
-For the release path, follow [Azure deployment](docs/DEPLOY.md). It includes a
-Free-site preparation command, production preflight and a manual deployment
-workflow. Configure [signup email](docs/EMAIL-SETUP.md) once before inviting people.
-No Azure resources are created by running the local app or ordinary checks.
+## Privacy & current scope
 
-See the [performance measurements](docs/PERFORMANCE.md) and
-[300-member launch preparation](docs/LOAD-READINESS.md) for the tested improvements,
-capacity assumptions and email-delivery requirements.
+Kindred is an **adults-only peer-support pilot**, not professional care or an emergency response service. A human moderator must operate the reporting queue.
 
-The live inbox currently shows the newest 100 conversations by creation time,
-with the latest 200 messages in an opened conversation. Block management shows
-the newest 500 blocked members. These screens do not yet provide older-history
-pagination; database blocks remain effective beyond the displayed list.
+Posts are visible to signed-in members. Regional filters help discovery; they do not create private rooms. Nicknames provide pseudonymity, not guaranteed anonymity. Direct messages have database access controls but are **not end-to-end encrypted**; privileged operators can access stored content.
+
+The inbox shows up to 100 conversations and the latest 200 messages per conversation; block management displays up to 500 members. Older-history navigation, automatic account deletion, and data export are not yet available. Passing tests does not establish production capacity or email delivery.
+
+## Project structure
+
+| Location          | Contents                                               |
+| ----------------- | ------------------------------------------------------ |
+| `src/components/` | Feed, posting, messaging, and account screens          |
+| `src/lib/`        | Authentication, data access, validation, and demo data |
+| `supabase/`       | Schema, upgrades, policies, and email templates        |
+| `tests/`          | Automated checks                                       |
+| `scripts/`        | Deployment and verification tools                      |
+| `docs/`           | Setup, launch, performance, and verification guides    |
+
+For measurements and known limits, see [performance notes](docs/PERFORMANCE.md), [300-member launch preparation](docs/LOAD-READINESS.md), and the [verification record](docs/VERIFICATION.md).
